@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 
@@ -308,9 +309,13 @@ class CompanyProfileFetcher:
         session: requests.Session | None = None,
         user_agent: str | None = None,
         timeout: int = 30,
+        retries: int = 2,
+        backoff: float = 1.0,
     ) -> None:
         self.url_template = url_template
         self.timeout = timeout
+        self.retries = retries
+        self.backoff = backoff
         self.session = session or requests.Session()
         if user_agent:
             self.session.headers["User-Agent"] = user_agent
@@ -319,9 +324,21 @@ class CompanyProfileFetcher:
         return self.url_template.format(symbol=ticker.strip().upper())
 
     def fetch_html(self, ticker: str) -> str:
-        resp = self.session.get(self.url_for(ticker), timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.text
+        # The profile page is large and occasionally times out; retry a few
+        # times with a short linear backoff so a transient blip doesn't drop a
+        # ticker's market cap (best-effort enrichment otherwise leaves it None).
+        url = self.url_for(ticker)
+        last_exc: Exception | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                resp = self.session.get(url, timeout=self.timeout)
+                resp.raise_for_status()
+                return resp.text
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < self.retries:
+                    time.sleep(self.backoff * (attempt + 1))
+        raise last_exc
 
     def fetch_profile(self, ticker: str) -> dict[str, float | int | None]:
         return parse_company_profile(self.fetch_html(ticker))
