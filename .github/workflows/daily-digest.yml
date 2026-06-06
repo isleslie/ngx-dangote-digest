@@ -11,7 +11,12 @@ on:
     # the source's ~30-minute delay. Weekdays only; the trading-calendar check
     # in the app still skips NGX public holidays once that set is populated.
     - cron: "0 15 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Fetch even on a non-trading day (weekend/holiday) — for end-to-end testing"
+        type: boolean
+        default: false
 
 # contents: write -> push DB + Markdown; pages/id-token -> deploy to Pages.
 permissions:
@@ -43,7 +48,10 @@ jobs:
         run: pip install -e .
 
       - name: Fetch today's quotes
-        run: ngx-digest
+        # `force` is only set for manual runs; scheduled runs leave it falsy.
+        # Safe even on a weekend: the stored row keys on the source's own
+        # TradeDate, so forcing just re-fetches the latest session in place.
+        run: ngx-digest ${{ inputs.force && '--force' || '' }}
 
       - name: Render reports
         run: |
