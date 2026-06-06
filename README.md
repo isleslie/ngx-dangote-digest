@@ -26,7 +26,7 @@ it later is a one-line config change — no code edits.
 - [x] **Fetch & store** — retrieve, normalize, and persist daily quotes
 - [x] **Daily report renderer** — Markdown + HTML with a per-ticker sparkline
 - [x] **Automation** — scheduled GitHub Action: DB commit-back + GitHub Pages
-- [ ] LLM summarization over recent history
+- [x] **LLM summarization** — optional narrative via GitHub Models
 - [ ] Delivery (email / chat webhook)
 
 ## Data source
@@ -123,6 +123,16 @@ In CI the reports live in two places:
 - **Markdown** is committed to the repo — `reports/latest.md` plus a dated
   archive `reports/history/<session>.md` — so it renders on GitHub.
 - **HTML** (with SVG charts) is published to **GitHub Pages**.
+
+### Narrative summary (optional)
+
+`ngx-report --summarize` prepends a short, factual LLM narrative of the day's
+moves. It uses **GitHub Models**, which in GitHub Actions authenticates with the
+built-in `GITHUB_TOKEN` (`permissions: models: read`) — **no extra secret**. It
+is best-effort: with no token or on any API error the report renders without the
+narrative. Model and limits are set under `summary:` in
+[`config/tickers.yaml`](config/tickers.yaml). The prompt is built from the
+stored figures only and instructs the model to state facts, not advice.
 
 ## Automation
 
