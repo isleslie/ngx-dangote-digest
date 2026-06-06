@@ -19,6 +19,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 ngx-digest = "ngx_digest.cli:main"
+ngx-report = "ngx_digest.report:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

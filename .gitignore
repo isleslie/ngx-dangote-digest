@@ -13,6 +13,10 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 debug/
+# Committed Markdown digests live in reports/; HTML is local scratch (the CI
+# publishes HTML to GitHub Pages instead of committing it).
+reports/*.html
+_site/
 
 # Tooling
 .pytest_cache/

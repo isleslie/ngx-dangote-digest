@@ -1,7 +1,9 @@
 name: Daily NGX Digest
 
-# Fetches the day's NGX quotes and commits the updated SQLite database back to
-# the repo, so history accumulates across otherwise-ephemeral Action runs.
+# Fetches the day's NGX quotes, commits the updated SQLite database AND the
+# rendered Markdown digest back to the repo (so both history and a browsable
+# report accumulate across ephemeral runs), then publishes the HTML report —
+# with its inline SVG charts — to GitHub Pages.
 
 on:
   schedule:
@@ -11,18 +13,23 @@ on:
     - cron: "0 15 * * 1-5"
   workflow_dispatch: {}
 
-# Allow the job to push the updated database back to the repository.
+# contents: write -> push DB + Markdown; pages/id-token -> deploy to Pages.
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
-# Never let two daily runs race on the commit-back.
+# Never let two daily runs race on the commit-back / deploy.
 concurrency:
   group: daily-digest
   cancel-in-progress: false
 
 jobs:
-  fetch:
+  digest:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Check out repository (with committed history DB)
         uses: actions/checkout@v4
@@ -38,15 +45,35 @@ jobs:
       - name: Fetch today's quotes
         run: ngx-digest
 
-      - name: Commit updated database
+      - name: Render reports
+        run: |
+          DAY="$(date -u +%Y-%m-%d)"
+          mkdir -p reports/history _site
+          # Markdown: a stable latest + a dated archive entry (committed).
+          ngx-report --format md  --out "reports/latest.md"
+          ngx-report --format md  --out "reports/history/${DAY}.md"
+          # HTML for Pages (not committed; published as a Pages artifact).
+          ngx-report --format html --out "_site/index.html"
+
+      - name: Commit database and Markdown report
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # quotes.db is gitignored for local dev, so force-add it here.
           git add -f data/quotes.db
+          git add reports/latest.md reports/history/
           if git diff --cached --quiet; then
-            echo "No data changes to commit."
+            echo "Nothing to commit."
           else
-            git commit -m "data: NGX quotes for $(date -u +%Y-%m-%d)"
+            git commit -m "data: NGX digest for $(date -u +%Y-%m-%d)"
             git push
           fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
