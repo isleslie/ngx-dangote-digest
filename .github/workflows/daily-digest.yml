@@ -1,0 +1,52 @@
+name: Daily NGX Digest
+
+# Fetches the day's NGX quotes and commits the updated SQLite database back to
+# the repo, so history accumulates across otherwise-ephemeral Action runs.
+
+on:
+  schedule:
+    # 15:00 UTC = 16:00 WAT — well after the NGX close (~14:30 WAT) and past
+    # the source's ~30-minute delay. Weekdays only; the trading-calendar check
+    # in the app still skips NGX public holidays once that set is populated.
+    - cron: "0 15 * * 1-5"
+  workflow_dispatch: {}
+
+# Allow the job to push the updated database back to the repository.
+permissions:
+  contents: write
+
+# Never let two daily runs race on the commit-back.
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository (with committed history DB)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Fetch today's quotes
+        run: ngx-digest
+
+      - name: Commit updated database
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # quotes.db is gitignored for local dev, so force-add it here.
+          git add -f data/quotes.db
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "data: NGX quotes for $(date -u +%Y-%m-%d)"
+            git push
+          fi
