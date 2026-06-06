@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import argparse
 import html as _html
+import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
@@ -60,6 +61,7 @@ class TickerReport:
 class ReportData:
     as_of: date
     tickers: list[TickerReport]
+    summary: str | None = None  # optional LLM narrative
 
 
 def build_report_data(
@@ -172,9 +174,10 @@ def render_sparkline_svg(
 # Renderers (pure)
 # --------------------------------------------------------------------------- #
 def render_markdown(data: ReportData) -> str:
-    lines = [
-        f"# NGX Dangote Daily Digest — {data.as_of.isoformat()}",
-        "",
+    lines = [f"# NGX Dangote Daily Digest — {data.as_of.isoformat()}", ""]
+    if data.summary:
+        lines += [f"> {data.summary}", ""]
+    lines += [
         "| Ticker | Company | Close (₦) | Change | % | Volume | Mkt cap | Trend |",
         "| ------ | ------- | --------: | -----: | -: | -----: | ------: | :---- |",
     ]
@@ -216,6 +219,9 @@ def render_html(data: ReportData) -> str:
             "</tr>"
         )
     body = "\n".join(rows)
+    summary_html = (
+        f'<p class="summary">{_html.escape(data.summary)}</p>\n' if data.summary else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -229,12 +235,13 @@ def render_html(data: ReportData) -> str:
   .ticker {{ font-weight: 600; }}
   .up {{ color: #16a34a; }} .down {{ color: #dc2626; }} .flat {{ color: #6b7280; }}
   .spark svg {{ vertical-align: middle; }}
+  .summary {{ font-size: 1.05rem; line-height: 1.5; max-width: 50rem; }}
   footer {{ margin-top: 1rem; color: #6b7280; font-size: .85rem; }}
 </style>
 </head>
 <body>
 <h1>NGX Dangote Daily Digest — {data.as_of.isoformat()}</h1>
-<table>
+{summary_html}<table>
 <thead><tr>
 <th>Ticker</th><th>Company</th><th>Close (₦)</th><th>Change</th>
 <th>%</th><th>Volume</th><th>Mkt cap</th><th>Trend</th>
@@ -257,6 +264,29 @@ def load_config(path: str | Path) -> dict:
         return yaml.safe_load(f)
 
 
+def _maybe_summarize(data: "ReportData", config: dict) -> str | None:
+    """Best-effort LLM narrative; returns None (and explains why) on any miss."""
+    # Imported lazily so summarize.py (which imports from this module) doesn't
+    # create an import cycle.
+    from .summarize import GitHubModelsClient, summarize
+
+    scfg = config.get("summary") or {}
+    token_env = scfg.get("token_env", "GITHUB_TOKEN")
+    token = os.environ.get(token_env, "")
+    if not token:
+        print(f"--summarize: no token in ${token_env}; rendering without a narrative.")
+        return None
+    client = GitHubModelsClient(
+        token,
+        model=scfg.get("model", "openai/gpt-4o-mini"),
+        endpoint=scfg.get("endpoint"),
+    )
+    narrative = summarize(data, client, max_tokens=int(scfg.get("max_tokens", 300)))
+    if narrative is None:
+        print("--summarize: generation failed; rendering without a narrative.")
+    return narrative
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="NGX Dangote digest — report renderer")
     p.add_argument("--config", default="config/tickers.yaml")
@@ -266,6 +296,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--date", help="as-of date YYYY-MM-DD "
                    "(default: the data's latest trade date)")
     p.add_argument("--out", help="write to this file (default: stdout)")
+    p.add_argument("--summarize", action="store_true",
+                   help="prepend an LLM narrative via GitHub Models "
+                        "(needs a token in the configured env var)")
     args = p.parse_args(argv)
 
     config = load_config(args.config)
@@ -274,6 +307,9 @@ def main(argv: list[str] | None = None) -> None:
     as_of = date.fromisoformat(args.date) if args.date else None
     with QuoteStore(args.db) as store:
         data = build_report_data(store, config["tickers"], days=args.days, as_of=as_of)
+
+    if args.summarize:
+        data = replace(data, summary=_maybe_summarize(data, config))
 
     text = render_html(data) if args.format == "html" else render_markdown(data)
     if args.out:

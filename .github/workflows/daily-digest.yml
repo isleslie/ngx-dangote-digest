@@ -18,11 +18,13 @@ on:
         type: boolean
         default: false
 
-# contents: write -> push DB + Markdown; pages/id-token -> deploy to Pages.
+# contents: write -> push DB + Markdown; pages/id-token -> deploy to Pages;
+# models: read -> GitHub Models inference for the LLM narrative.
 permissions:
   contents: write
   pages: write
   id-token: write
+  models: read
 
 # Never let two daily runs race on the commit-back / deploy.
 concurrency:
@@ -76,14 +78,19 @@ jobs:
 
       - name: Render reports
         if: steps.data.outputs.rows != '0'
+        # GITHUB_TOKEN (with models: read) authenticates the GitHub Models call
+        # behind --summarize; if it is unavailable the report renders narrative-
+        # free. Summarize once, reuse the text across all output formats.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DAY="${{ steps.data.outputs.date }}"   # key archive by session date
           mkdir -p reports/history _site
           # Markdown: a stable latest + a dated archive entry (committed).
-          ngx-report --format md  --out "reports/latest.md"
-          ngx-report --format md  --out "reports/history/${DAY}.md"
+          ngx-report --format md   --summarize --out "reports/latest.md"
+          ngx-report --format md   --summarize --out "reports/history/${DAY}.md"
           # HTML for Pages (not committed; published as a Pages artifact).
-          ngx-report --format html --out "_site/index.html"
+          ngx-report --format html --summarize --out "_site/index.html"
 
       - name: Commit database and Markdown report
         run: |

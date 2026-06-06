@@ -21,6 +21,15 @@ source:
   # Identify your bot honestly and give a contact address.
   user_agent: "ngx-dangote-digest/0.1 (portfolio project; contact: you@example.com)"
 
+# Optional LLM narrative (ngx-report --summarize). Uses GitHub Models, which in
+# GitHub Actions authenticates with the built-in GITHUB_TOKEN (no extra secret;
+# requires `permissions: models: read`). Best-effort: if the token is absent or
+# the call fails, the report renders without a narrative.
+summary:
+  model: "openai/gpt-4o-mini"
+  token_env: "GITHUB_TOKEN"
+  max_tokens: 300
+
 tickers:
   - symbol: DANGCEM
     name: Dangote Cement

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 
 from bs4 import BeautifulSoup
@@ -117,6 +118,19 @@ def test_renderers_are_deterministic():
     data = _sample_data()
     assert render_markdown(data) == render_markdown(data)
     assert render_html(data) == render_html(data)
+
+
+def test_summary_is_rendered_when_present():
+    data = replace(_sample_data(), summary="Markets were quiet today.")
+    assert "> Markets were quiet today." in render_markdown(data)
+    soup = BeautifulSoup(render_html(data), "html.parser")
+    assert soup.select_one("p.summary").get_text() == "Markets were quiet today."
+
+
+def test_no_summary_block_when_absent():
+    assert "\n> " not in render_markdown(_sample_data())
+    soup = BeautifulSoup(render_html(_sample_data()), "html.parser")
+    assert soup.select_one("p.summary") is None
 
 
 # --- data builder (DB-backed) ----------------------------------------------
