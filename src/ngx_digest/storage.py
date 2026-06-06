@@ -106,7 +106,13 @@ class QuoteStore:
         return rows[0] if rows else None
 
     def close(self) -> None:
-        self._conn.close()
+        # Fold the write-ahead log back into the main .db file and truncate it,
+        # so the single .db is self-contained — safe to copy or commit without
+        # its -wal/-shm sidecars (which the CI commit-back relies on).
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        finally:
+            self._conn.close()
 
     def __enter__(self) -> "QuoteStore":
         return self

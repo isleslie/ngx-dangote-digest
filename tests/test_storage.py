@@ -40,6 +40,22 @@ def test_latest_on_empty_db_is_none(tmp_path):
         assert store.latest("DANGCEM") is None
 
 
+def test_close_checkpoints_wal_so_db_is_self_contained(tmp_path):
+    db = tmp_path / "t.db"
+    with QuoteStore(db) as store:  # __exit__ -> close() checkpoints the WAL
+        store.upsert(make_quote(close=530.0))
+
+    # Simulate committing only the .db (as CI does): drop the WAL sidecars.
+    for suffix in ("-wal", "-shm"):
+        sidecar = db.with_name(db.name + suffix)
+        if sidecar.exists():
+            sidecar.unlink()
+
+    # The data must still be there, read straight from the main file.
+    with QuoteStore(db) as store:
+        assert store.latest("DANGCEM")["close"] == 530.0
+
+
 def test_market_cap_fields_roundtrip(tmp_path):
     q = Quote(
         "DANGCEM", date(2026, 6, 5), 1180.0, None, None, 1180.0, 1180.0, 1136842,
