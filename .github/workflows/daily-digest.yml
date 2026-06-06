@@ -53,9 +53,31 @@ jobs:
         # TradeDate, so forcing just re-fetches the latest session in place.
         run: ngx-digest ${{ inputs.force && '--force' || '' }}
 
-      - name: Render reports
+      - name: Inspect database
+        id: data
+        # Expose the row count and latest session date. On a non-trading day
+        # the fetch is skipped, so an empty/absent DB yields rows=0 and the
+        # report/Pages steps below are skipped — no empty digest is committed.
         run: |
-          DAY="$(date -u +%Y-%m-%d)"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, sqlite3
+          rows, day = 0, ""
+          p = "data/quotes.db"
+          if os.path.exists(p):
+              try:
+                  con = sqlite3.connect(p)
+                  rows = con.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
+                  day = con.execute("SELECT MAX(trade_date) FROM quotes").fetchone()[0] or ""
+              except sqlite3.Error:
+                  rows, day = 0, ""
+          print(f"rows={rows}")
+          print(f"date={day}")
+          PY
+
+      - name: Render reports
+        if: steps.data.outputs.rows != '0'
+        run: |
+          DAY="${{ steps.data.outputs.date }}"   # key archive by session date
           mkdir -p reports/history _site
           # Markdown: a stable latest + a dated archive entry (committed).
           ngx-report --format md  --out "reports/latest.md"
@@ -69,19 +91,24 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # quotes.db is gitignored for local dev, so force-add it here.
           git add -f data/quotes.db
-          git add reports/latest.md reports/history/
+          # Only stage reports when there is data (skips empty non-trading days).
+          if [ "${{ steps.data.outputs.rows }}" != "0" ]; then
+            git add reports/latest.md reports/history/
+          fi
           if git diff --cached --quiet; then
             echo "Nothing to commit."
           else
-            git commit -m "data: NGX digest for $(date -u +%Y-%m-%d)"
+            git commit -m "data: NGX digest for ${{ steps.data.outputs.date }}"
             git push
           fi
 
       - name: Upload Pages artifact
+        if: steps.data.outputs.rows != '0'
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
       - name: Deploy to GitHub Pages
+        if: steps.data.outputs.rows != '0'
         id: deploy
         uses: actions/deploy-pages@v4

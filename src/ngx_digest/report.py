@@ -263,12 +263,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--db", default="data/quotes.db")
     p.add_argument("--format", choices=("md", "html"), default="md")
     p.add_argument("--days", type=int, default=30, help="history window for trend")
-    p.add_argument("--date", help="as-of date YYYY-MM-DD (default: today)")
+    p.add_argument("--date", help="as-of date YYYY-MM-DD "
+                   "(default: the data's latest trade date)")
     p.add_argument("--out", help="write to this file (default: stdout)")
     args = p.parse_args(argv)
 
     config = load_config(args.config)
-    as_of = date.fromisoformat(args.date) if args.date else date.today()
+    # Leave as_of as None when unspecified so the header reflects the data's
+    # own latest trade date rather than the wall-clock run date.
+    as_of = date.fromisoformat(args.date) if args.date else None
     with QuoteStore(args.db) as store:
         data = build_report_data(store, config["tickers"], days=args.days, as_of=as_of)
 
