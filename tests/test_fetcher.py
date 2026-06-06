@@ -2,8 +2,10 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import requests
 
 from ngx_digest.fetcher import (
+    CompanyProfileFetcher,
     index_equities_json,
     parse_company_profile,
     parse_equities_quote,
@@ -112,3 +114,43 @@ def test_profile_missing_fields_are_none():
     prof = parse_company_profile("<html><body>no data here</body></html>")
     assert prof["market_cap"] is None
     assert prof["shares_outstanding"] is None
+
+
+class _FlakySession:
+    """A requests-like session that fails the first ``fail_times`` calls."""
+
+    def __init__(self, fail_times: int, text: str) -> None:
+        self.fail_times = fail_times
+        self.text = text
+        self.calls = 0
+        self.headers: dict = {}
+
+    def get(self, url, timeout=None):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise requests.ConnectionError("transient")
+
+        class _Resp:
+            def __init__(self, text):
+                self.text = text
+
+            def raise_for_status(self):
+                pass
+
+        return _Resp(self.text)
+
+
+def test_profile_fetch_retries_then_succeeds():
+    sess = _FlakySession(fail_times=2, text="<strong class='MarketCap'>1,000.00</strong>")
+    f = CompanyProfileFetcher("http://x/{symbol}", session=sess, retries=2, backoff=0)
+    html = f.fetch_html("DANGCEM")
+    assert "MarketCap" in html
+    assert sess.calls == 3  # two failures then a success
+
+
+def test_profile_fetch_raises_after_exhausting_retries():
+    sess = _FlakySession(fail_times=9, text="x")
+    f = CompanyProfileFetcher("http://x/{symbol}", session=sess, retries=2, backoff=0)
+    with pytest.raises(requests.RequestException):
+        f.fetch_html("DANGCEM")
+    assert sess.calls == 3  # initial attempt + two retries
