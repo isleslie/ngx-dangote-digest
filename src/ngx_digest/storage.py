@@ -14,18 +14,27 @@ from .models import Quote
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS quotes (
-    ticker      TEXT    NOT NULL,
-    trade_date  TEXT    NOT NULL,          -- ISO 8601 (YYYY-MM-DD)
-    open        REAL,
-    high        REAL,
-    low         REAL,
-    close       REAL,
-    prev_close  REAL,
-    volume      INTEGER,
-    fetched_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    ticker             TEXT    NOT NULL,
+    trade_date         TEXT    NOT NULL,   -- ISO 8601 (YYYY-MM-DD)
+    open               REAL,
+    high               REAL,
+    low                REAL,
+    close              REAL,
+    prev_close         REAL,
+    volume             INTEGER,
+    market_cap         REAL,
+    shares_outstanding INTEGER,
+    fetched_at         TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (ticker, trade_date)
 );
 """
+
+# Columns added after the initial release; applied to pre-existing databases
+# via ALTER TABLE so older quotes.db files migrate forward in place.
+_ADDED_COLUMNS = (
+    ("market_cap", "REAL"),
+    ("shares_outstanding", "INTEGER"),
+)
 
 
 class QuoteStore:
@@ -36,21 +45,33 @@ class QuoteStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add any columns missing from an older quotes.db (additive only)."""
+        existing = {row[1] for row in self._conn.execute("PRAGMA table_info(quotes);")}
+        for column, decl in _ADDED_COLUMNS:
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE quotes ADD COLUMN {column} {decl};")
+        self._conn.commit()
 
     def upsert(self, quote: Quote) -> None:
         self._conn.execute(
             """
             INSERT INTO quotes
-                (ticker, trade_date, open, high, low, close, prev_close, volume)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (ticker, trade_date, open, high, low, close, prev_close, volume,
+                 market_cap, shares_outstanding)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ticker, trade_date) DO UPDATE SET
-                open       = excluded.open,
-                high       = excluded.high,
-                low        = excluded.low,
-                close      = excluded.close,
-                prev_close = excluded.prev_close,
-                volume     = excluded.volume,
-                fetched_at = datetime('now');
+                open               = excluded.open,
+                high               = excluded.high,
+                low                = excluded.low,
+                close              = excluded.close,
+                prev_close         = excluded.prev_close,
+                volume             = excluded.volume,
+                market_cap         = excluded.market_cap,
+                shares_outstanding = excluded.shares_outstanding,
+                fetched_at         = datetime('now');
             """,
             (
                 quote.ticker,
@@ -61,6 +82,8 @@ class QuoteStore:
                 quote.close,
                 quote.prev_close,
                 quote.volume,
+                quote.market_cap,
+                quote.shares_outstanding,
             ),
         )
         self._conn.commit()

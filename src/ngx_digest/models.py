@@ -21,6 +21,10 @@ class Quote:
     close: float | None
     prev_close: float | None
     volume: int | None
+    # Enrichment from the NGX company-profile page (optional; default None so
+    # existing positional construction keeps working).
+    market_cap: float | None = None
+    shares_outstanding: int | None = None
 
     @property
     def change(self) -> float | None:
