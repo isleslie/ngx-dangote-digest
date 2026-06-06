@@ -2,6 +2,7 @@ from datetime import date
 
 from bs4 import BeautifulSoup
 
+from ngx_digest import report as report_cli
 from ngx_digest.models import Quote
 from ngx_digest.report import (
     ReportData,
@@ -156,3 +157,19 @@ def test_as_of_defaults_to_latest_trade_date_in_data(tmp_path):
             store, [{"symbol": "DANGCEM", "name": "Dangote Cement"}]
         )
     assert data.as_of == date(2026, 6, 5)  # newest stored session, not today
+
+
+def test_cli_header_uses_data_date_not_today(tmp_path, capsys):
+    db = tmp_path / "r.db"
+    with QuoteStore(db) as store:
+        store.upsert(_q("DANGCEM", date(2026, 6, 5), 1180.0, 1150.0))
+    cfg = tmp_path / "tickers.yaml"
+    cfg.write_text(
+        "source: {}\ntickers:\n  - symbol: DANGCEM\n    name: Dangote Cement\n",
+        encoding="utf-8",
+    )
+    # No --date: the header must reflect the stored session, not the run date.
+    report_cli.main(["--db", str(db), "--config", str(cfg), "--format", "md"])
+    out = capsys.readouterr().out
+    assert "2026-06-05" in out
+    assert date.today().isoformat() not in out  # guards the old run-date bug
