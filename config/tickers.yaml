@@ -5,11 +5,15 @@
 # pipeline will pick it up with no code changes.
 
 source:
-  name: example-ngx-source
-  # Each ticker page is expected at <base_url>/<TICKER>.
-  # >>> VERIFY this against your chosen data source AND its terms of use /
-  #     robots.txt BEFORE scraping. Prefer an official API if one exists. <<<
-  base_url: "https://example.com/ngx"
+  name: ngx-official-statistics
+  # Official NGX equities-statistics endpoint — the keyless JSON feed that
+  # powers the public "Equities Price List" page. Returns one record per
+  # listed equity (Open/High/Low/Close/PrevClose/Volume/TradeDate), so a
+  # single request covers every ticker below. Data is ~30 minutes delayed.
+  # robots.txt: none on doclib.ngxgroup.com; ngxgroup.com only disallows
+  # /wp-admin/. Educational / non-commercial use only — NGX asserts copyright
+  # over its market data, so do not redistribute it commercially.
+  base_url: "https://doclib.ngxgroup.com/REST/api/statistics/equities/?market=&sector=&orderby=&pageSize=300&pageNo=0"
   # Identify your bot honestly and give a contact address.
   user_agent: "ngx-dangote-digest/0.1 (portfolio project; contact: you@example.com)"
 

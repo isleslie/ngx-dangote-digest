@@ -1,9 +1,17 @@
 from datetime import date
 from pathlib import Path
 
-from ngx_digest.fetcher import parse_quote, parse_stats_table
+import pytest
+
+from ngx_digest.fetcher import (
+    index_equities_json,
+    parse_equities_quote,
+    parse_quote,
+    parse_stats_table,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_quote.html"
+NGX_FIXTURE = Path(__file__).parent / "fixtures" / "ngx_equities.json"
 
 
 def test_parse_stats_table_lowercases_labels():
@@ -34,3 +42,49 @@ def test_parser_is_resilient_to_missing_fields():
     assert q.close == 100.0
     assert q.open is None
     assert q.pct_change is None  # no prev_close -> undefined, not a crash
+
+
+# --- NGX official statistics (JSON) source, against a saved real payload ----
+
+
+def test_ngx_json_index_is_keyed_by_uppercased_symbol():
+    index = index_equities_json(NGX_FIXTURE.read_text())
+    assert {"DANGCEM", "DANGSUGAR", "NASCON"} <= set(index)
+
+
+def test_ngx_parse_extracts_all_fields():
+    # DANGSUGAR is a full-range day: every OHLC field is populated.
+    q = parse_equities_quote(NGX_FIXTURE.read_text(), "DANGSUGAR")
+    assert q.open == 70.35
+    assert q.high == 72.0
+    assert q.low == 71.5
+    assert q.close == 72.0
+    assert q.prev_close == 70.35
+    assert q.volume == 5_924_847  # exact integer, not abbreviated "5.9M"
+    assert isinstance(q.volume, int)
+
+
+def test_ngx_uses_payload_trade_date_not_wall_clock():
+    # The endpoint serves the latest session; its TradeDate wins over the arg.
+    q = parse_equities_quote(NGX_FIXTURE.read_text(), "DANGCEM", date(2030, 1, 1))
+    assert q.trade_date == date(2026, 6, 5)
+
+
+def test_ngx_tolerates_null_high_low():
+    # On a flat day NGX returns null High/Low; that must be None, not a crash.
+    q = parse_equities_quote(NGX_FIXTURE.read_text(), "DANGCEM")
+    assert q.high is None
+    assert q.low is None
+    assert q.close == 1180.0
+    assert q.prev_close == 1180.0
+
+
+def test_ngx_case_insensitive_lookup():
+    q = parse_equities_quote(NGX_FIXTURE.read_text(), "nascon")
+    assert q.ticker == "nascon"
+    assert q.close == 219.5
+
+
+def test_ngx_unknown_ticker_raises():
+    with pytest.raises(KeyError):
+        parse_equities_quote(NGX_FIXTURE.read_text(), "NOTREAL")

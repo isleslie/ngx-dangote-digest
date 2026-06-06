@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from .calendar import is_trading_day
-from .fetcher import HttpQuoteFetcher, parse_quote
+from .fetcher import NgxStatisticsFetcher
 from .storage import QuoteStore
 
 
@@ -40,25 +40,28 @@ def run_fetch(
         return
 
     src = config["source"]
-    fetcher = HttpQuoteFetcher(src["base_url"], user_agent=src.get("user_agent"))
+    fetcher = NgxStatisticsFetcher(src["base_url"], user_agent=src.get("user_agent"))
+
+    # One request covers every ticker; fetch (and optionally dump) it once.
+    payload = fetcher.fetch_payload()
+    if save_html_dir:
+        out = Path(save_html_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "equities.json").write_text(payload, encoding="utf-8")
+        print(f"Saved raw payload to {out / 'equities.json'}")
 
     print(f"Fetching {len(config['tickers'])} tickers for {on_date} ...")
     with QuoteStore(db_path) as store:
         for entry in config["tickers"]:
             symbol = entry["symbol"]
             try:
-                if save_html_dir:
-                    html = fetcher.fetch_html(symbol)
-                    out = Path(save_html_dir)
-                    out.mkdir(parents=True, exist_ok=True)
-                    (out / f"{symbol}.html").write_text(html, encoding="utf-8")
-                    quote = parse_quote(html, symbol, on_date)
-                else:
-                    quote = fetcher.fetch(symbol, on_date)
+                quote = fetcher.fetch(symbol, on_date)
                 store.upsert(quote)
+                # The endpoint serves the latest session; surface its real date.
+                stamp = "" if quote.trade_date == on_date else f" [{quote.trade_date}]"
                 print(
                     f"  {symbol:10s} close={quote.close} "
-                    f"chg%={quote.pct_change} vol={quote.volume}"
+                    f"chg%={quote.pct_change} vol={quote.volume}{stamp}"
                 )
             except Exception as exc:  # keep going so one bad ticker doesn't abort the run
                 print(f"  {symbol:10s} FAILED: {exc}")
