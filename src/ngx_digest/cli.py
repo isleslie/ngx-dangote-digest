@@ -10,13 +10,18 @@ Examples
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 import yaml
 
 from .calendar import is_trading_day
-from .fetcher import NgxStatisticsFetcher
+from .fetcher import (
+    CompanyProfileFetcher,
+    NgxStatisticsFetcher,
+    parse_company_profile,
+)
 from .storage import QuoteStore
 
 
@@ -40,8 +45,16 @@ def run_fetch(
         return
 
     src = config["source"]
-    fetcher = NgxStatisticsFetcher(src["base_url"], user_agent=src.get("user_agent"))
+    user_agent = src.get("user_agent")
+    fetcher = NgxStatisticsFetcher(src["base_url"], user_agent=user_agent)
+    # Optional market-cap enrichment from the company-profile page.
+    profile_fetcher = (
+        CompanyProfileFetcher(src["profile_url"], user_agent=user_agent)
+        if src.get("profile_url")
+        else None
+    )
 
+    out = None
     # One request covers every ticker; fetch (and optionally dump) it once.
     payload = fetcher.fetch_payload()
     if save_html_dir:
@@ -56,12 +69,30 @@ def run_fetch(
             symbol = entry["symbol"]
             try:
                 quote = fetcher.fetch(symbol, on_date)
+                # Enrich with market cap; a profile failure must not drop the
+                # core OHLC row, so it is isolated and only warns.
+                if profile_fetcher is not None:
+                    try:
+                        html = profile_fetcher.fetch_html(symbol)
+                        if out is not None:
+                            (out / f"{symbol}_profile.html").write_text(
+                                html, encoding="utf-8"
+                            )
+                        prof = parse_company_profile(html)
+                        quote = replace(
+                            quote,
+                            market_cap=prof["market_cap"],
+                            shares_outstanding=prof["shares_outstanding"],
+                        )
+                    except Exception as exc:
+                        print(f"  {symbol:10s} (market-cap enrich failed: {exc})")
                 store.upsert(quote)
                 # The endpoint serves the latest session; surface its real date.
                 stamp = "" if quote.trade_date == on_date else f" [{quote.trade_date}]"
                 print(
                     f"  {symbol:10s} close={quote.close} "
-                    f"chg%={quote.pct_change} vol={quote.volume}{stamp}"
+                    f"chg%={quote.pct_change} vol={quote.volume} "
+                    f"mcap={quote.market_cap}{stamp}"
                 )
             except Exception as exc:  # keep going so one bad ticker doesn't abort the run
                 print(f"  {symbol:10s} FAILED: {exc}")

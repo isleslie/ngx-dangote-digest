@@ -5,6 +5,7 @@ import pytest
 
 from ngx_digest.fetcher import (
     index_equities_json,
+    parse_company_profile,
     parse_equities_quote,
     parse_quote,
     parse_stats_table,
@@ -12,6 +13,7 @@ from ngx_digest.fetcher import (
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_quote.html"
 NGX_FIXTURE = Path(__file__).parent / "fixtures" / "ngx_equities.json"
+PROFILE_FIXTURE = Path(__file__).parent / "fixtures" / "company_profile.html"
 
 
 def test_parse_stats_table_lowercases_labels():
@@ -88,3 +90,25 @@ def test_ngx_case_insensitive_lookup():
 def test_ngx_unknown_ticker_raises():
     with pytest.raises(KeyError):
         parse_equities_quote(NGX_FIXTURE.read_text(), "NOTREAL")
+
+
+# --- NGX company-profile (market cap / shares outstanding) ------------------
+
+
+def test_profile_parses_market_cap_and_shares():
+    prof = parse_company_profile(PROFILE_FIXTURE.read_text())
+    assert prof["market_cap"] == 19_910_799_916_180.0  # ₦ commas stripped
+    assert prof["shares_outstanding"] == 16_873_559_251  # ".00" -> exact int
+    assert isinstance(prof["shares_outstanding"], int)
+
+
+def test_profile_market_cap_equals_shares_times_close():
+    # Internal-consistency check NGX itself satisfies (close = 1180.00).
+    prof = parse_company_profile(PROFILE_FIXTURE.read_text())
+    assert round(prof["shares_outstanding"] * 1180.0, 2) == prof["market_cap"]
+
+
+def test_profile_missing_fields_are_none():
+    prof = parse_company_profile("<html><body>no data here</body></html>")
+    assert prof["market_cap"] is None
+    assert prof["shares_outstanding"] is None

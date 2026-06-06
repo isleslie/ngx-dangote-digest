@@ -14,6 +14,10 @@ source:
   # /wp-admin/. Educational / non-commercial use only — NGX asserts copyright
   # over its market data, so do not redistribute it commercially.
   base_url: "https://doclib.ngxgroup.com/REST/api/statistics/equities/?market=&sector=&orderby=&pageSize=300&pageNo=0"
+  # Optional per-ticker enrichment: NGX company-profile page carries market cap
+  # and shares outstanding (server-rendered). One request per ticker; must
+  # contain a {symbol} placeholder. Remove this key to skip enrichment.
+  profile_url: "https://ngxgroup.com/exchange/data/company-profile/?symbol={symbol}&directory=companydirectory"
   # Identify your bot honestly and give a contact address.
   user_agent: "ngx-dangote-digest/0.1 (portfolio project; contact: you@example.com)"
 

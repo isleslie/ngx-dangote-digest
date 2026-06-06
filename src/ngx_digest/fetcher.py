@@ -258,3 +258,70 @@ class NgxStatisticsFetcher(QuoteFetcher):
         if record is None:
             raise KeyError(f"ticker {ticker!r} not found in NGX statistics payload")
         return quote_from_record(record, ticker, trade_date)
+
+
+# ---------------------------------------------------------------------------
+# NGX company-profile source (market cap / shares outstanding)
+# ---------------------------------------------------------------------------
+# The statistics endpoint above carries no market-cap figure. NGX's per-ticker
+# company-profile page does, server-rendered into <strong> tags with stable CSS
+# classes:
+#
+#   <strong class="MarketCap">19,910,799,916,180.00</strong>
+#   <strong class="SharesOutstanding">16,873,559,251.00</strong>
+#
+# It is keyless and one page per ticker. As a sanity check the source satisfies
+# MarketCap == SharesOutstanding x ClosePrice, so it agrees with the statistics
+# feed. Parsing stays HTTP-free for unit testing against a saved fixture.
+
+# Our profile field -> CSS class the value is rendered under.
+_PROFILE_CLASS_MAP: dict[str, str] = {
+    "market_cap": "MarketCap",
+    "shares_outstanding": "SharesOutstanding",
+}
+
+
+def parse_company_profile(html: str) -> dict[str, float | int | None]:
+    """Extract market cap / shares outstanding from a company-profile page."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    def _text(css_class: str) -> str | None:
+        el = soup.select_one(f".{css_class}")
+        return el.get_text(strip=True) if el else None
+
+    return {
+        "market_cap": _to_float(_text(_PROFILE_CLASS_MAP["market_cap"])),
+        "shares_outstanding": _to_int(_text(_PROFILE_CLASS_MAP["shares_outstanding"])),
+    }
+
+
+class CompanyProfileFetcher:
+    """Fetches one NGX company-profile page per ticker for market-cap data.
+
+    ``url_template`` must contain a ``{symbol}`` placeholder, e.g.
+    ``https://ngxgroup.com/exchange/data/company-profile/?symbol={symbol}&directory=companydirectory``.
+    """
+
+    def __init__(
+        self,
+        url_template: str,
+        session: requests.Session | None = None,
+        user_agent: str | None = None,
+        timeout: int = 30,
+    ) -> None:
+        self.url_template = url_template
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        if user_agent:
+            self.session.headers["User-Agent"] = user_agent
+
+    def url_for(self, ticker: str) -> str:
+        return self.url_template.format(symbol=ticker.strip().upper())
+
+    def fetch_html(self, ticker: str) -> str:
+        resp = self.session.get(self.url_for(ticker), timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.text
+
+    def fetch_profile(self, ticker: str) -> dict[str, float | int | None]:
+        return parse_company_profile(self.fetch_html(ticker))
