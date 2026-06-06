@@ -14,9 +14,10 @@ Design notes
 """
 from __future__ import annotations
 
+import json
 import re
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -86,6 +87,102 @@ def parse_quote(html: str, ticker: str, trade_date: date) -> Quote:
     )
 
 
+# ---------------------------------------------------------------------------
+# NGX official statistics source (JSON)
+# ---------------------------------------------------------------------------
+# Active data source. The NGX powers its public "Equities Price List" page from
+# a keyless REST endpoint that returns one JSON record per listed equity:
+#
+#   https://doclib.ngxgroup.com/REST/api/statistics/equities/
+#       ?market=&sector=&orderby=&pageSize=300&pageNo=0
+#
+# It is the authoritative exchange data (30-minute delayed), needs no API key,
+# and is plain server-side JSON, so a single request covers every ticker. The
+# parsing helpers below are deliberately HTTP-free so they can be unit-tested
+# against a saved JSON fixture (see tests/fixtures/ngx_equities.json).
+
+# Our schema field -> the NGX REST key that holds it.
+_NGX_FIELD_MAP: dict[str, str] = {
+    "open": "OpeningPrice",
+    "high": "HighPrice",
+    "low": "LowPrice",
+    "close": "ClosePrice",
+    "prev_close": "PrevClosingPrice",
+    "volume": "Volume",
+}
+
+
+def _num(value) -> float | None:
+    """Coerce an NGX numeric field (already a JSON number, a string, or null)."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return _to_float(str(value))
+
+
+def _parse_trade_date(value) -> date | None:
+    """Parse the NGX ``TradeDate`` ("2026-06-05T00:00:00") into a ``date``."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except ValueError:
+        return None
+
+
+def index_equities_json(payload: str | bytes | list | dict) -> dict[str, dict]:
+    """Index an NGX equities-statistics payload by upper-cased ticker symbol."""
+    data = payload if isinstance(payload, (list, dict)) else json.loads(payload)
+    # The endpoint returns a bare list today; tolerate a wrapped object too.
+    rows = data
+    if isinstance(data, dict):
+        for key in ("data", "Data", "result", "Result", "items"):
+            if isinstance(data.get(key), list):
+                rows = data[key]
+                break
+    out: dict[str, dict] = {}
+    for record in rows:
+        symbol = str(record.get("Symbol", "")).strip().upper()
+        if symbol and symbol not in out:
+            out[symbol] = record
+    return out
+
+
+def quote_from_record(
+    record: dict, ticker: str, trade_date: date | None = None
+) -> Quote:
+    """Build a :class:`Quote` from one NGX statistics record.
+
+    The record's own ``TradeDate`` is authoritative (the endpoint only ever
+    serves the latest trading session); ``trade_date`` is a fallback.
+    """
+    volume = _num(record.get(_NGX_FIELD_MAP["volume"]))
+    return Quote(
+        ticker=ticker,
+        trade_date=_parse_trade_date(record.get("TradeDate"))
+        or trade_date
+        or date.today(),
+        open=_num(record.get(_NGX_FIELD_MAP["open"])),
+        high=_num(record.get(_NGX_FIELD_MAP["high"])),
+        low=_num(record.get(_NGX_FIELD_MAP["low"])),
+        close=_num(record.get(_NGX_FIELD_MAP["close"])),
+        prev_close=_num(record.get(_NGX_FIELD_MAP["prev_close"])),
+        volume=int(round(volume)) if volume is not None else None,
+    )
+
+
+def parse_equities_quote(
+    payload: str | bytes | list | dict, ticker: str, trade_date: date | None = None
+) -> Quote:
+    """Parse one ticker's quote out of a full NGX statistics payload."""
+    index = index_equities_json(payload)
+    record = index.get(ticker.strip().upper())
+    if record is None:
+        raise KeyError(f"ticker {ticker!r} not found in NGX statistics payload")
+    return quote_from_record(record, ticker, trade_date)
+
+
 class QuoteFetcher(ABC):
     @abstractmethod
     def fetch(self, ticker: str, trade_date: date | None = None) -> Quote: ...
@@ -117,3 +214,47 @@ class HttpQuoteFetcher(QuoteFetcher):
 
     def fetch(self, ticker: str, trade_date: date | None = None) -> Quote:
         return parse_quote(self.fetch_html(ticker), ticker, trade_date or date.today())
+
+
+class NgxStatisticsFetcher(QuoteFetcher):
+    """Fetches the NGX equities-statistics JSON once and serves every ticker.
+
+    Unlike a per-ticker page scraper, this source returns all listed equities
+    in a single response, so the payload is fetched once per run and cached;
+    each ``fetch`` resolves its ticker from that cached payload.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        session: requests.Session | None = None,
+        user_agent: str | None = None,
+        timeout: int = 20,
+    ) -> None:
+        self.base_url = base_url
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        if user_agent:
+            self.session.headers["User-Agent"] = user_agent
+        self._payload: str | None = None
+        self._index: dict[str, dict] | None = None
+
+    def fetch_payload(self, refresh: bool = False) -> str:
+        """Return the raw JSON payload, fetching (and caching) it once."""
+        if self._payload is None or refresh:
+            resp = self.session.get(self.base_url, timeout=self.timeout)
+            resp.raise_for_status()
+            self._payload = resp.text
+            self._index = None
+        return self._payload
+
+    def index(self, refresh: bool = False) -> dict[str, dict]:
+        if self._index is None or refresh:
+            self._index = index_equities_json(self.fetch_payload(refresh=refresh))
+        return self._index
+
+    def fetch(self, ticker: str, trade_date: date | None = None) -> Quote:
+        record = self.index().get(ticker.strip().upper())
+        if record is None:
+            raise KeyError(f"ticker {ticker!r} not found in NGX statistics payload")
+        return quote_from_record(record, ticker, trade_date)
