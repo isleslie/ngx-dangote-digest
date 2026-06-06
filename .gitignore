@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Project data / debug output
+data/*.db
+data/*.db-wal
+data/*.db-shm
+debug/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.coverage

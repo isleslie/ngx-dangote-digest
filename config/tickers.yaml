@@ -1,0 +1,24 @@
+# Configuration for the NGX Dangote daily digest.
+#
+# The three publicly listed Dangote companies on the NGX. When the Dangote
+# Petroleum Refinery completes its planned IPO, add it under `tickers` and the
+# pipeline will pick it up with no code changes.
+
+source:
+  name: example-ngx-source
+  # Each ticker page is expected at <base_url>/<TICKER>.
+  # >>> VERIFY this against your chosen data source AND its terms of use /
+  #     robots.txt BEFORE scraping. Prefer an official API if one exists. <<<
+  base_url: "https://example.com/ngx"
+  # Identify your bot honestly and give a contact address.
+  user_agent: "ngx-dangote-digest/0.1 (portfolio project; contact: you@example.com)"
+
+tickers:
+  - symbol: DANGCEM
+    name: Dangote Cement
+  - symbol: DANGSUGAR
+    name: Dangote Sugar Refinery
+  - symbol: NASCON
+    name: NASCON Allied Industries
+  # - symbol: DANGREF            # uncomment once the refinery lists
+  #   name: Dangote Petroleum Refinery
