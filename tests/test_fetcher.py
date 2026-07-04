@@ -6,6 +6,7 @@ import requests
 
 from ngx_digest.fetcher import (
     CompanyProfileFetcher,
+    NgxStatisticsFetcher,
     index_equities_json,
     parse_company_profile,
     parse_equities_quote,
@@ -153,4 +154,20 @@ def test_profile_fetch_raises_after_exhausting_retries():
     f = CompanyProfileFetcher("http://x/{symbol}", session=sess, retries=2, backoff=0)
     with pytest.raises(requests.RequestException):
         f.fetch_html("DANGCEM")
+    assert sess.calls == 3  # initial attempt + two retries
+
+
+def test_statistics_fetch_retries_then_succeeds():
+    # A transient blip on the primary payload must not abort the whole run.
+    sess = _FlakySession(fail_times=2, text="[]")
+    f = NgxStatisticsFetcher("http://x/stats", session=sess, retries=2, backoff=0)
+    assert f.fetch_payload() == "[]"
+    assert sess.calls == 3  # two failures then a success
+
+
+def test_statistics_fetch_raises_after_exhausting_retries():
+    sess = _FlakySession(fail_times=9, text="[]")
+    f = NgxStatisticsFetcher("http://x/stats", session=sess, retries=2, backoff=0)
+    with pytest.raises(requests.RequestException):
+        f.fetch_payload()
     assert sess.calls == 3  # initial attempt + two retries
