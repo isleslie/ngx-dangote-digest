@@ -231,9 +231,13 @@ class NgxStatisticsFetcher(QuoteFetcher):
         session: requests.Session | None = None,
         user_agent: str | None = None,
         timeout: int = 20,
+        retries: int = 2,
+        backoff: float = 1.0,
     ) -> None:
         self.base_url = base_url
         self.timeout = timeout
+        self.retries = retries
+        self.backoff = backoff
         self.session = session or requests.Session()
         if user_agent:
             self.session.headers["User-Agent"] = user_agent
@@ -241,12 +245,27 @@ class NgxStatisticsFetcher(QuoteFetcher):
         self._index: dict[str, dict] | None = None
 
     def fetch_payload(self, refresh: bool = False) -> str:
-        """Return the raw JSON payload, fetching (and caching) it once."""
+        """Return the raw JSON payload, fetching (and caching) it once.
+
+        This is the run's single most critical request — if it fails the whole
+        fetch aborts before anything is stored — so retry a few times with a
+        short linear backoff to ride out a transient NGX blip.
+        """
         if self._payload is None or refresh:
-            resp = self.session.get(self.base_url, timeout=self.timeout)
-            resp.raise_for_status()
-            self._payload = resp.text
-            self._index = None
+            last_exc: Exception | None = None
+            for attempt in range(self.retries + 1):
+                try:
+                    resp = self.session.get(self.base_url, timeout=self.timeout)
+                    resp.raise_for_status()
+                    self._payload = resp.text
+                    self._index = None
+                    break
+                except requests.RequestException as exc:
+                    last_exc = exc
+                    if attempt < self.retries:
+                        time.sleep(self.backoff * (attempt + 1))
+            else:
+                raise last_exc
         return self._payload
 
     def index(self, refresh: bool = False) -> dict[str, dict]:
